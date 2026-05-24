@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teachable Machine - Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <h1>Space Clap</h1>
+    <p>"Your claps are fuel! Fly through <br>
+        space and beat your high score!"</p>
+
+    <img src="img/rocket.png" class="rocket" alt="rocket">
+
+    <div id="tmLabel">Teachable Machine Pose Model</div>
+    <button type="button" id="startBtn" onclick="init()">Start</button>
+    <div id="label-container"></div>
+
+    <div id="webcamBox">
+        <canvas id="webcamCanvas" width="200" height="200"></canvas>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="score">Score: 0</div>
+
+    <div id="gameOver">
+        <h2>Game Over!</h2>
+        <p id="finalScore">Score: 0</p>
+        <p id="finalHighScore">High Score: 0</p>
+        <button id="restartBtn" onclick="startGame()">Try Again</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+
+    <script>
+        const URL = "./model/";
+
+        let model, webcam, maxPredictions;
+
+        let rocketY = 300;
+        let rocketSpeed = 0;
+        let gravity = 0.4;
+        let lift = -1.5;
+        let score = 0;
+        let highScore = 0;
+        let gameRunning = false;
+        let currentPose = "rest";
+        let modelReady = false;
+
+        let meteors = [];
+        let meteorTimer = 0;
+        let meteorInterval = 90;
+
+        let rocketImg = new Image();
+        let imageLoaded = false;
+        rocketImg.src = "img/rocket.png";
+        rocketImg.onload = () => { imageLoaded = true; }
+
+        let gameCanvas = document.getElementById("gameCanvas");
+        gameCanvas.width = window.innerWidth;
+        gameCanvas.height = window.innerHeight;
+        let ctx = gameCanvas.getContext("2d");
+
+        let webcamCanvas = document.getElementById("webcamCanvas");
+        let webcamCtx = webcamCanvas.getContext("2d");
+
+        const init = async () => {
+            document.querySelector("h1").style.display = "none";
+            document.querySelector("p").style.display = "none";
+            document.querySelector(".rocket").style.display = "none";
+            document.getElementById("startBtn").style.display = "none";
+            document.getElementById("tmLabel").style.display = "none";
+            document.getElementById("label-container").style.display = "none";
+
+            document.getElementById("gameCanvas").style.display = "block";
+            document.getElementById("webcamBox").style.display = "block";
+            document.getElementById("score").style.display = "block";
+
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+            model = await tmPose.load(modelURL, metadataURL);
+            maxPredictions = model.getTotalClasses();
+
+            const flip = true;
+            webcam = new tmPose.Webcam(200, 200, flip);
+            await webcam.setup();
+            await webcam.play();
+
+            let warmupFrames = 0;
+            const warmup = async () => {
+                webcam.update();
+                webcamCtx.drawImage(webcam.canvas, 0, 0);
+                await checkPose();
+                warmupFrames++;
+                if (warmupFrames < 60) {
+                    window.requestAnimationFrame(warmup);
+                } else {
+                    modelReady = true;
+                    window.requestAnimationFrame(poseLoop);
+                    startGame();
+                }
+            };
+            window.requestAnimationFrame(warmup);
+        }
+
+        const poseLoop = async () => {
+            webcam.update();
+            webcamCtx.drawImage(webcam.canvas, 0, 0);
+            await checkPose();
+            window.requestAnimationFrame(poseLoop);
+        }
+
+        const checkPose = async () => {
+            const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+            const prediction = await model.predict(posenetOutput);
+
+            for (let i = 0; i < maxPredictions; i++) {
+                let name = prediction[i].className.toLowerCase();
+                let chance = prediction[i].probability;
+
+                if (name === "clap" && chance > 0.6) {
+                    currentPose = "clap";
+                } else if (name === "rest" && chance > 0.6) {
+                    currentPose = "rest";
+                }
+            }
+        }
+
+        const startGame = () => {
+            rocketY = gameCanvas.height / 2;
+            rocketSpeed = 0;
+            score = 0;
+            meteors = [];
+            meteorTimer = 0;
+            gameRunning = true;
+            document.getElementById("gameOver").style.display = "none";
+            gameLoop();
+        }
+
+        const spawnMeteor = () => {
+            let gap = 220;
+            let topHeight = Math.random() * (gameCanvas.height - gap - 100) + 50;
+
+            meteors.push({
+                x: gameCanvas.width,
+                topHeight: topHeight,
+                bottomY: topHeight + gap,
+                width: 60,
+                counted: false
+            });
+        }
+
+        const gameLoop = () => {
+            if (!gameRunning) return;
+
+            ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+            if (currentPose === "clap") {
+                rocketSpeed += lift;
+                if (rocketSpeed < -8) rocketSpeed = -8;
+            } else {
+                rocketSpeed += gravity;
+                if (rocketSpeed > 10) rocketSpeed = 10;
+            }
+
+            rocketY += rocketSpeed;
+
+            if (imageLoaded) {
+                ctx.drawImage(rocketImg, 80, rocketY, 80, 80);
+            } else {
+                ctx.fillStyle = "white";
+                ctx.fillRect(80, rocketY, 40, 60);
+            }
+
+            meteorTimer++;
+            if (meteorTimer >= meteorInterval) {
+                spawnMeteor();
+                meteorTimer = 0;
+            }
+
+            for (let i = 0; i < meteors.length; i++) {
+                let m = meteors[i];
+                m.x -= 3;
+
+                ctx.fillStyle = "#b5651d";
+                ctx.fillRect(m.x, 0, m.width, m.topHeight);
+                ctx.fillRect(m.x, m.bottomY, m.width, gameCanvas.height - m.bottomY);
+
+                if (m.x + m.width < 80 && !m.counted) {
+                    score++;
+                    m.counted = true;
+                    document.getElementById("score").innerHTML = "Score: " + score;
+                }
+
+                let rocketLeft   = 80;
+                let rocketRight  = 160;
+                let rocketTop    = rocketY;
+                let rocketBottom = rocketY + 80;
+
+                let hitTop    = rocketRight > m.x && rocketLeft < m.x + m.width && rocketTop < m.topHeight;
+                let hitBottom = rocketRight > m.x && rocketLeft < m.x + m.width && rocketBottom > m.bottomY;
+
+                if (hitTop || hitBottom) {
+                    endGame();
+                    return;
+                }
+            }
+
+            if (rocketY < 0 || rocketY + 80 > gameCanvas.height) {
+                endGame();
+                return;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        const endGame = () => {
+            gameRunning = false;
+            if (score > highScore) highScore = score;
+            document.getElementById("finalScore").innerHTML = "Score: " + score;
+            document.getElementById("finalHighScore").innerHTML = "High Score: " + highScore;
+            document.getElementById("gameOver").style.display = "block";
+        }
+    </script>
+
+</body>
+</html>
